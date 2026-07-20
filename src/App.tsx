@@ -64,6 +64,7 @@ import type { DiagramEdge, DiagramFile, DiagramNode, SemanticModel, ViewSnapshot
 type WorkspaceMode = 'diagram' | 'mindmap'
 type MindMapStructure = 'original' | 'balanced' | 'right'
 type HistoryEntry = { view: ViewSnapshot; model: SemanticModel }
+type WorkspaceHistory = { undo: HistoryEntry[]; redo: HistoryEntry[] }
 
 const cloneSnapshot = (nodes: DiagramNode[], edges: DiagramEdge[]): ViewSnapshot =>
   JSON.parse(JSON.stringify({ nodes, edges })) as ViewSnapshot
@@ -104,6 +105,7 @@ function Editor() {
   const [draggedLayerId, setDraggedLayerId] = useState<string | null>(null)
   const [layerDropTargetId, setLayerDropTargetId] = useState<string | null>(null)
   const semanticModelRef = useRef<SemanticModel>(initialSemanticModel)
+  const storageReady = useRef(false)
 
   useEffect(() => {
     const compactLayout = window.matchMedia('(max-width: 760px)')
@@ -121,8 +123,10 @@ function Editor() {
     compactLayout.addEventListener('change', adaptPanels)
     return () => compactLayout.removeEventListener('change', adaptPanels)
   }, [])
-  const undoStack = useRef<HistoryEntry[]>([])
-  const redoStack = useRef<HistoryEntry[]>([])
+  const historyByWorkspace = useRef<Record<WorkspaceMode, WorkspaceHistory>>({
+    diagram: { undo: [], redo: [] },
+    mindmap: { undo: [], redo: [] },
+  })
   const uploadRef = useRef<HTMLInputElement>(null)
   const importRef = useRef<HTMLInputElement>(null)
   const diagramWorkspace = useRef<ViewSnapshot>(cloneSnapshot(initialDiagramSnapshot.nodes, initialDiagramSnapshot.edges))
@@ -167,11 +171,9 @@ function Editor() {
     setWorkspaceMode(nextMode)
     setSelectedNodeIds([])
     setSelectedEdgeIds([])
-    undoStack.current = []
-    redoStack.current = []
     setNodes(cloneSnapshot(target.nodes, target.edges).nodes)
     setEdges(cloneSnapshot(target.nodes, target.edges).edges)
-    setSaved(true)
+    setSaved(false)
     setNotice(nextMode === 'mindmap' ? '已進入思維導圖 · Tab 新增子主題' : '已回到原圖復刻工作區')
     setTimeout(() => {
       const focusNodes = nextMode === 'mindmap'
@@ -203,37 +205,41 @@ function Editor() {
       const node = nodes.find((item) => item.id === detail.nodeId)
       const semanticId = node?.data.semanticId
       if (!semanticId) return
-      undoStack.current.push({ view: cloneSnapshot(nodes, edges), model: cloneModel(semanticModelRef.current) })
-      if (undoStack.current.length > 60) undoStack.current.shift()
-      redoStack.current = []
+      const history = historyByWorkspace.current[workspaceMode]
+      history.undo.push({ view: cloneSnapshot(nodes, edges), model: cloneModel(semanticModelRef.current) })
+      if (history.undo.length > 60) history.undo.shift()
+      history.redo = []
       const patch = detail.field === 'label' ? { title: detail.value } : { [detail.field]: detail.value }
       installSemanticModel(updateSemanticEntity(semanticModelRef.current, semanticId, patch))
     }
     window.addEventListener('semantic-node-change', handleSemanticChange)
     return () => window.removeEventListener('semantic-node-change', handleSemanticChange)
-  }, [edges, installSemanticModel, nodes])
+  }, [edges, installSemanticModel, nodes, workspaceMode])
 
   const remember = useCallback(() => {
-    undoStack.current.push({ view: cloneSnapshot(nodes, edges), model: cloneModel(semanticModelRef.current) })
-    if (undoStack.current.length > 60) undoStack.current.shift()
-    redoStack.current = []
-  }, [nodes, edges])
+    const history = historyByWorkspace.current[workspaceMode]
+    history.undo.push({ view: cloneSnapshot(nodes, edges), model: cloneModel(semanticModelRef.current) })
+    if (history.undo.length > 60) history.undo.shift()
+    history.redo = []
+  }, [nodes, edges, workspaceMode])
 
   const undo = useCallback(() => {
-    const previous = undoStack.current.pop()
+    const history = historyByWorkspace.current[workspaceMode]
+    const previous = history.undo.pop()
     if (!previous) return
-    redoStack.current.push({ view: cloneSnapshot(nodes, edges), model: cloneModel(semanticModelRef.current) })
+    history.redo.push({ view: cloneSnapshot(nodes, edges), model: cloneModel(semanticModelRef.current) })
     installSemanticModel(previous.model, previous.view)
     markChanged('已復原上一步')
-  }, [edges, installSemanticModel, markChanged, nodes])
+  }, [edges, installSemanticModel, markChanged, nodes, workspaceMode])
 
   const redo = useCallback(() => {
-    const next = redoStack.current.pop()
+    const history = historyByWorkspace.current[workspaceMode]
+    const next = history.redo.pop()
     if (!next) return
-    undoStack.current.push({ view: cloneSnapshot(nodes, edges), model: cloneModel(semanticModelRef.current) })
+    history.undo.push({ view: cloneSnapshot(nodes, edges), model: cloneModel(semanticModelRef.current) })
     installSemanticModel(next.model, next.view)
     markChanged('已重做')
-  }, [edges, installSemanticModel, markChanged, nodes])
+  }, [edges, installSemanticModel, markChanged, nodes, workspaceMode])
 
   const addMindTopic = useCallback(
     (kind: 'child' | 'sibling') => {
@@ -797,10 +803,10 @@ function Editor() {
     setNodes((current) =>
       current.map((node) => (node.id === 'paper' ? { ...node, data: { ...node.data, showReference: !showReference } } : node)),
     )
-    setNotice(showReference ? '已隱藏原圖底稿' : '已顯示原圖底稿')
+    markChanged(showReference ? '已隱藏原圖底稿' : '已顯示原圖底稿')
   }
 
-  const unifiedViews = () => {
+  const unifiedViews = useCallback(() => {
     const current = syncSnapshot(cloneSnapshot(nodes, edges), workspaceMode, semanticModelRef.current)
     const diagram = workspaceMode === 'diagram'
       ? current
@@ -811,9 +817,9 @@ function Editor() {
     diagramWorkspace.current = diagram
     mindMapWorkspace.current = mindmap
     return { diagram, mindmap }
-  }
+  }, [edges, nodes, syncSnapshot, workspaceMode])
 
-  const saveLocal = () => {
+  const writeLocalFile = useCallback((message?: string) => {
     const views = unifiedViews()
     const active = workspaceMode === 'diagram' ? views.diagram : views.mindmap
     const file: DiagramFile = {
@@ -823,46 +829,85 @@ function Editor() {
       edges: active.edges,
       semanticModel: semanticModelRef.current,
       views,
+      workspace: { mode: workspaceMode, mindMapStructure },
     }
-    localStorage.setItem('jing-lamp-unified', JSON.stringify(file))
-    setSaved(true)
-    setNotice('已儲存統一語義模型與兩種視圖')
-  }
+    try {
+      localStorage.setItem('jing-lamp-unified', JSON.stringify(file))
+      setSaved(true)
+      if (message) setNotice(message)
+      return true
+    } catch {
+      setSaved(false)
+      setNotice('本機儲存空間不足，請先匯出 JSON 備份')
+      return false
+    }
+  }, [mindMapStructure, unifiedViews, workspaceMode])
 
-  const restoreLocal = () => {
+  const saveLocal = () => writeLocalFile('已手動儲存到本機')
+
+  const restoreLocal = (automatic = false) => {
     const raw = localStorage.getItem('jing-lamp-unified') ?? localStorage.getItem('jing-lamp-diagram')
     if (!raw) {
-      setNotice('尚無瀏覽器存檔')
-      return
+      if (!automatic) setNotice('尚無瀏覽器存檔')
+      return false
     }
     try {
       const file = JSON.parse(raw) as Partial<DiagramFile> & { nodes?: DiagramNode[]; edges?: DiagramEdge[] }
+      const restoredMode = file.workspace?.mode === 'mindmap' ? 'mindmap' : 'diagram'
+      const restoredStructure = file.workspace?.mindMapStructure
       const legacyMindMap = !file.semanticModel?.relations?.length
       const model = file.semanticModel ?? createSemanticModelFromDiagram(file.nodes ?? initialDiagramSnapshot.nodes, initialSemanticModel)
-      const diagramSource = file.views?.diagram ?? (workspaceMode === 'diagram' && file.nodes && file.edges
+      const diagramSource = file.views?.diagram ?? (restoredMode === 'diagram' && file.nodes && file.edges
         ? { nodes: file.nodes, edges: file.edges }
         : initialDiagramSnapshot)
       const mindmapSource = legacyMindMap
         ? { nodes: [], edges: [] }
-        : file.views?.mindmap ?? (workspaceMode === 'mindmap' && file.nodes && file.edges
+        : file.views?.mindmap ?? (restoredMode === 'mindmap' && file.nodes && file.edges
         ? { nodes: file.nodes, edges: file.edges }
         : initialMindMapSnapshot)
       const diagram = syncDiagramSnapshot(diagramSource, model)
       const mindmap = syncMindMapSnapshot(mindmapSource, model)
-      remember()
+      if (!automatic) remember()
       semanticModelRef.current = model
       setSemanticModel(model)
       diagramWorkspace.current = diagram
       mindMapWorkspace.current = mindmap
-      const active = workspaceMode === 'diagram' ? diagram : mindmap
+      setWorkspaceMode(restoredMode)
+      if (restoredStructure === 'original' || restoredStructure === 'balanced' || restoredStructure === 'right') {
+        setMindMapStructure(restoredStructure)
+      }
+      const active = restoredMode === 'diagram' ? diagram : mindmap
       setNodes(active.nodes)
       setEdges(active.edges)
       setSaved(true)
-      setNotice('已載入統一模型，兩種視圖已同步')
+      setNotice(automatic ? '已自動恢復上次編輯' : '已載入本機存檔，兩種視圖已同步')
+      setTimeout(() => flow.fitView({ padding: restoredMode === 'mindmap' ? 0.2 : 0.08, duration: 350, maxZoom: 1.1 }), 0)
+      return true
     } catch {
       setNotice('存檔格式無法讀取')
+      return false
     }
   }
+
+  useEffect(() => {
+    if (storageReady.current) return
+    restoreLocal(true)
+    storageReady.current = true
+  }, [])
+
+  useEffect(() => {
+    if (!storageReady.current || saved) return
+    const timer = window.setTimeout(() => writeLocalFile('已自動儲存到本機'), 600)
+    return () => window.clearTimeout(timer)
+  }, [edges, mindMapStructure, nodes, saved, workspaceMode, writeLocalFile])
+
+  useEffect(() => {
+    const saveBeforeLeaving = () => {
+      if (storageReady.current && !saved) writeLocalFile()
+    }
+    window.addEventListener('pagehide', saveBeforeLeaving)
+    return () => window.removeEventListener('pagehide', saveBeforeLeaving)
+  }, [saved, writeLocalFile])
 
   const resetDiagram = () => {
     remember()
@@ -1026,8 +1071,8 @@ function Editor() {
             ><Palette />屬性</button>
           </div>
           <span className="toolbar-separator" />
-          <IconButton label="復原" onClick={undo} disabled={!undoStack.current.length}><Undo2 /></IconButton>
-          <IconButton label="重做" onClick={redo} disabled={!redoStack.current.length}><Redo2 /></IconButton>
+          <IconButton label="復原" onClick={undo} disabled={!historyByWorkspace.current[workspaceMode].undo.length}><Undo2 /></IconButton>
+          <IconButton label="重做" onClick={redo} disabled={!historyByWorkspace.current[workspaceMode].redo.length}><Redo2 /></IconButton>
           <span className="toolbar-separator" />
           <IconButton label="縮放至全圖" onClick={() => flow.fitView({ padding: 0.08, duration: 450 })}><Maximize2 /></IconButton>
           {workspaceMode === 'diagram' ? (
@@ -1045,7 +1090,7 @@ function Editor() {
 
         <div className="toolbar-group save-tools">
           <span className={`save-state ${saved ? 'is-saved' : ''}`}><span />{saved ? '已儲存' : '有變更'}</span>
-          <IconButton label="載入瀏覽器存檔" onClick={restoreLocal}><Upload /></IconButton>
+          <IconButton label="載入瀏覽器存檔" onClick={() => restoreLocal()}><Upload /></IconButton>
           <button className="primary-button" onClick={saveLocal}><Save /> 儲存</button>
           <div className="export-menu">
             <button className="export-button"><Download /> 匯出 <ChevronDown /></button>
@@ -1166,6 +1211,7 @@ function Editor() {
             edgeTypes={edgeTypes}
             onNodesChange={(changes) => {
               onNodesChange(changes)
+              if (changes.some((change) => change.type !== 'select')) markChanged('正在自動儲存變更')
             }}
             onEdgesChange={onEdgesChange}
             onConnect={onConnect}

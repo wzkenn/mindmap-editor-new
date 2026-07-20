@@ -80,4 +80,8 @@ export type DiagramFile = {
     diagram: ViewSnapshot
     mindmap: ViewSnapshot
   }
+  workspace?: {
+    mode: 'diagram' | 'mindmap'
+    mindMapStructure: 'original' | 'balanced' | 'right'
+  }
 }
