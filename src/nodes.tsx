@@ -12,6 +12,7 @@ import {
   type NodeProps,
 } from '@xyflow/react'
 import type { DiagramEdge, DiagramNode, DiagramNodeData } from './types'
+import { assetUrl } from './assetUrl'
 
 const HANDLE_LIST = [
   ['top', Position.Top],
@@ -49,7 +50,7 @@ export function ArtboardNode({ data }: NodeProps<DiagramNode>) {
       {data.showReference && (
         <img
           className="reference-image"
-          src="/assets/reference-original.jpg"
+          src={assetUrl('assets/reference-original.jpg')}
           alt="原圖參考底稿"
           style={{ opacity: data.referenceOpacity ?? 0.16 }}
         />
@@ -183,7 +184,7 @@ export function ImageNode({ data, selected }: NodeProps<DiagramNode>) {
   return (
     <div className={`image-node ${selected ? 'is-selected' : ''}`}>
       <NodeResizer isVisible={selected} minWidth={50} minHeight={80} keepAspectRatio lineClassName="resize-line" handleClassName="resize-handle" />
-      <img src={data.src} alt={data.label ?? '圖像元素'} draggable={false} />
+      <img src={data.src ? assetUrl(data.src) : undefined} alt={data.label ?? '圖像元素'} draggable={false} />
       <Handles selected={selected} />
     </div>
   )

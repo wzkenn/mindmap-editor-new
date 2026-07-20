@@ -1,5 +1,6 @@
 import { MarkerType, Position } from '@xyflow/react'
 import type { DiagramEdge, DiagramNode } from './types'
+import { assetUrl } from './assetUrl'
 
 const text = (
   id: string,
@@ -112,9 +113,9 @@ export const initialNodes: DiagramNode[] = [
 
   frame('principle-frame', 118, 432, 682, 440),
   text('principle-title', '理事無礙法界', 270, 452, 380, 36, 600, '（一燈雙入，心境互照，智照斯在）'),
-  image('mirror-left', '/assets/mirror.png', 158, 548, 142, 224),
-  image('lamp-center', '/assets/lamp.png', 374, 548, 164, 224),
-  image('mirror-right', '/assets/mirror.png', 620, 548, 142, 224),
+  image('mirror-left', assetUrl('assets/mirror.png'), 158, 548, 142, 224),
+  image('lamp-center', assetUrl('assets/lamp.png'), 374, 548, 164, 224),
+  image('mirror-right', assetUrl('assets/mirror.png'), 620, 548, 142, 224),
   text('mirror-left-label', '心／事', 146, 780, 165, 25, 500, '（所照／鏡）'),
   text('lamp-label', '本智／理／用', 350, 780, 210, 25, 500, '（能照／燈）'),
   text('mirror-right-label', '境／事', 608, 780, 165, 25, 500, '（所照／鏡）'),
@@ -125,14 +126,14 @@ export const initialNodes: DiagramNode[] = [
   frame('heart-frame', 35, 1055, 390, 295, true, true),
   frame('context-frame', 495, 1055, 390, 295, true, true),
 
-  image('heart-top', '/assets/mirror.png', 171, 1065, 118, 186),
-  image('heart-left', '/assets/mirror.png', 55, 1144, 112, 176),
-  image('heart-right', '/assets/mirror.png', 292, 1144, 112, 176),
-  image('heart-bottom', '/assets/mirror.png', 171, 1190, 118, 186),
-  image('context-top', '/assets/mirror.png', 631, 1065, 118, 186),
-  image('context-left', '/assets/mirror.png', 515, 1144, 112, 176),
-  image('context-right', '/assets/mirror.png', 752, 1144, 112, 176),
-  image('context-bottom', '/assets/mirror.png', 631, 1190, 118, 186),
+  image('heart-top', assetUrl('assets/mirror.png'), 171, 1065, 118, 186),
+  image('heart-left', assetUrl('assets/mirror.png'), 55, 1144, 112, 176),
+  image('heart-right', assetUrl('assets/mirror.png'), 292, 1144, 112, 176),
+  image('heart-bottom', assetUrl('assets/mirror.png'), 171, 1190, 118, 186),
+  image('context-top', assetUrl('assets/mirror.png'), 631, 1065, 118, 186),
+  image('context-left', assetUrl('assets/mirror.png'), 515, 1144, 112, 176),
+  image('context-right', assetUrl('assets/mirror.png'), 752, 1144, 112, 176),
+  image('context-bottom', assetUrl('assets/mirror.png'), 631, 1190, 118, 186),
 ]
 
 export const initialEdges: DiagramEdge[] = [
