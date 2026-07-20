@@ -59,16 +59,70 @@ import {
   syncMindMapSnapshot,
   updateSemanticEntity,
 } from './semanticModel'
-import type { DiagramEdge, DiagramFile, DiagramNode, SemanticModel, ViewSnapshot } from './types'
+import type { DiagramArtboard, DiagramEdge, DiagramFile, DiagramNode, SemanticModel, ViewSnapshot } from './types'
 
 type WorkspaceMode = 'diagram' | 'mindmap'
 type MindMapStructure = 'original' | 'balanced' | 'right'
-type HistoryEntry = { view: ViewSnapshot; model: SemanticModel }
+type HistoryEntry =
+  | { kind: 'view'; view: ViewSnapshot; model: SemanticModel }
+  | { kind: 'artboard-delete'; artboard: DiagramArtboard; index: number }
 type WorkspaceHistory = { undo: HistoryEntry[]; redo: HistoryEntry[] }
+type ArtboardHistory = Record<WorkspaceMode, WorkspaceHistory>
 
 const cloneSnapshot = (nodes: DiagramNode[], edges: DiagramEdge[]): ViewSnapshot =>
   JSON.parse(JSON.stringify({ nodes, edges })) as ViewSnapshot
 const cloneModel = (model: SemanticModel): SemanticModel => JSON.parse(JSON.stringify(model)) as SemanticModel
+const cloneArtboard = (artboard: DiagramArtboard): DiagramArtboard => JSON.parse(JSON.stringify(artboard)) as DiagramArtboard
+
+const createInitialArtboard = (): DiagramArtboard => ({
+  id: 'artboard-1',
+  name: '原圖畫板',
+  semanticModel: cloneModel(initialSemanticModel),
+  views: {
+    diagram: cloneSnapshot(initialDiagramSnapshot.nodes, initialDiagramSnapshot.edges),
+    mindmap: cloneSnapshot(initialMindMapSnapshot.nodes, initialMindMapSnapshot.edges),
+  },
+  mindMapStructure: 'original',
+})
+
+const createBlankArtboard = (index: number): DiagramArtboard => {
+  const name = `畫板 ${index}`
+  const diagram: ViewSnapshot = {
+    nodes: [
+      {
+        id: 'paper',
+        type: 'artboardNode',
+        position: { x: 0, y: 0 },
+        style: { width: 920, height: 1380 },
+        selectable: false,
+        draggable: false,
+        deletable: false,
+        zIndex: -10,
+        data: { variant: 'artboard', showReference: false, referenceOpacity: 0.16 },
+      },
+      {
+        id: 'mind-context',
+        type: 'textNode',
+        position: { x: 335, y: 615 },
+        style: { width: 250 },
+        zIndex: 5,
+        data: { label: name, semanticId: 'mind-context', variant: 'text', fontSize: 30, weight: 600, align: 'center' },
+      },
+    ],
+    edges: [],
+  }
+  const semanticModel = createSemanticModelFromDiagram(diagram.nodes)
+  return {
+    id: `artboard-${Date.now()}`,
+    name,
+    semanticModel,
+    views: {
+      diagram,
+      mindmap: syncMindMapSnapshot({ nodes: [], edges: [] }, semanticModel),
+    },
+    mindMapStructure: 'original',
+  }
+}
 
 function IconButton({
   label,
@@ -91,11 +145,15 @@ function IconButton({
 }
 
 function Editor() {
+  const initialArtboard = useRef(createInitialArtboard())
   const [nodes, setNodes, onNodesChange] = useNodesState<DiagramNode>(initialDiagramSnapshot.nodes)
   const [edges, setEdges, onEdgesChange] = useEdgesState<DiagramEdge>(initialDiagramSnapshot.edges)
   const [, setSemanticModel] = useState<SemanticModel>(initialSemanticModel)
   const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>('diagram')
   const [mindMapStructure, setMindMapStructure] = useState<MindMapStructure>('original')
+  const [artboards, setArtboards] = useState<DiagramArtboard[]>([cloneArtboard(initialArtboard.current)])
+  const [activeArtboardId, setActiveArtboardId] = useState(initialArtboard.current.id)
+  const [pendingDeleteArtboardId, setPendingDeleteArtboardId] = useState<string | null>(null)
   const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([])
   const [selectedEdgeIds, setSelectedEdgeIds] = useState<string[]>([])
   const [saved, setSaved] = useState(true)
@@ -123,15 +181,27 @@ function Editor() {
     compactLayout.addEventListener('change', adaptPanels)
     return () => compactLayout.removeEventListener('change', adaptPanels)
   }, [])
-  const historyByWorkspace = useRef<Record<WorkspaceMode, WorkspaceHistory>>({
-    diagram: { undo: [], redo: [] },
-    mindmap: { undo: [], redo: [] },
+  const historiesByArtboard = useRef<Record<string, ArtboardHistory>>({
+    [initialArtboard.current.id]: {
+      diagram: { undo: [], redo: [] },
+      mindmap: { undo: [], redo: [] },
+    },
   })
+  const artboardsRef = useRef<DiagramArtboard[]>([cloneArtboard(initialArtboard.current)])
   const uploadRef = useRef<HTMLInputElement>(null)
+  const backgroundUploadRef = useRef<HTMLInputElement>(null)
   const importRef = useRef<HTMLInputElement>(null)
   const diagramWorkspace = useRef<ViewSnapshot>(cloneSnapshot(initialDiagramSnapshot.nodes, initialDiagramSnapshot.edges))
   const mindMapWorkspace = useRef<ViewSnapshot>(cloneSnapshot(initialMindMapSnapshot.nodes, initialMindMapSnapshot.edges))
   const flow = useReactFlow<DiagramNode, DiagramEdge>()
+
+  const workspaceHistory = useCallback((artboardId = activeArtboardId, mode = workspaceMode) => {
+    historiesByArtboard.current[artboardId] ??= {
+      diagram: { undo: [], redo: [] },
+      mindmap: { undo: [], redo: [] },
+    }
+    return historiesByArtboard.current[artboardId][mode]
+  }, [activeArtboardId, workspaceMode])
 
   const selectedNode = nodes.find((node) => selectedNodeIds.length === 1 && node.id === selectedNodeIds[0])
   const selectedEdge = edges.find((edge) => selectedEdgeIds.length === 1 && edge.id === selectedEdgeIds[0])
@@ -205,8 +275,8 @@ function Editor() {
       const node = nodes.find((item) => item.id === detail.nodeId)
       const semanticId = node?.data.semanticId
       if (!semanticId) return
-      const history = historyByWorkspace.current[workspaceMode]
-      history.undo.push({ view: cloneSnapshot(nodes, edges), model: cloneModel(semanticModelRef.current) })
+      const history = workspaceHistory()
+      history.undo.push({ kind: 'view', view: cloneSnapshot(nodes, edges), model: cloneModel(semanticModelRef.current) })
       if (history.undo.length > 60) history.undo.shift()
       history.redo = []
       const patch = detail.field === 'label' ? { title: detail.value } : { [detail.field]: detail.value }
@@ -214,32 +284,14 @@ function Editor() {
     }
     window.addEventListener('semantic-node-change', handleSemanticChange)
     return () => window.removeEventListener('semantic-node-change', handleSemanticChange)
-  }, [edges, installSemanticModel, nodes, workspaceMode])
+  }, [edges, installSemanticModel, nodes, workspaceHistory])
 
   const remember = useCallback(() => {
-    const history = historyByWorkspace.current[workspaceMode]
-    history.undo.push({ view: cloneSnapshot(nodes, edges), model: cloneModel(semanticModelRef.current) })
+    const history = workspaceHistory()
+    history.undo.push({ kind: 'view', view: cloneSnapshot(nodes, edges), model: cloneModel(semanticModelRef.current) })
     if (history.undo.length > 60) history.undo.shift()
     history.redo = []
-  }, [nodes, edges, workspaceMode])
-
-  const undo = useCallback(() => {
-    const history = historyByWorkspace.current[workspaceMode]
-    const previous = history.undo.pop()
-    if (!previous) return
-    history.redo.push({ view: cloneSnapshot(nodes, edges), model: cloneModel(semanticModelRef.current) })
-    installSemanticModel(previous.model, previous.view)
-    markChanged('已復原上一步')
-  }, [edges, installSemanticModel, markChanged, nodes, workspaceMode])
-
-  const redo = useCallback(() => {
-    const history = historyByWorkspace.current[workspaceMode]
-    const next = history.redo.pop()
-    if (!next) return
-    history.undo.push({ view: cloneSnapshot(nodes, edges), model: cloneModel(semanticModelRef.current) })
-    installSemanticModel(next.model, next.view)
-    markChanged('已重做')
-  }, [edges, installSemanticModel, markChanged, nodes, workspaceMode])
+  }, [nodes, edges, workspaceHistory])
 
   const addMindTopic = useCallback(
     (kind: 'child' | 'sibling') => {
@@ -819,8 +871,172 @@ function Editor() {
     return { diagram, mindmap }
   }, [edges, nodes, syncSnapshot, workspaceMode])
 
+  const setArtboardCollection = useCallback((next: DiagramArtboard[]) => {
+    artboardsRef.current = next
+    setArtboards(next)
+  }, [])
+
+  const saveActiveArtboardToCollection = useCallback((views = unifiedViews()) => {
+    const next = artboardsRef.current.map((artboard) => artboard.id === activeArtboardId
+      ? {
+          ...artboard,
+          semanticModel: cloneModel(semanticModelRef.current),
+          views: {
+            diagram: cloneSnapshot(views.diagram.nodes, views.diagram.edges),
+            mindmap: cloneSnapshot(views.mindmap.nodes, views.mindmap.edges),
+          },
+          mindMapStructure,
+        }
+      : artboard)
+    setArtboardCollection(next)
+    return next
+  }, [activeArtboardId, mindMapStructure, setArtboardCollection, unifiedViews])
+
+  const openArtboard = useCallback((target: DiagramArtboard) => {
+    const nextBoard = cloneArtboard(target)
+    semanticModelRef.current = nextBoard.semanticModel
+    setSemanticModel(nextBoard.semanticModel)
+    diagramWorkspace.current = cloneSnapshot(nextBoard.views.diagram.nodes, nextBoard.views.diagram.edges)
+    mindMapWorkspace.current = cloneSnapshot(nextBoard.views.mindmap.nodes, nextBoard.views.mindmap.edges)
+    setMindMapStructure(nextBoard.mindMapStructure)
+    setActiveArtboardId(nextBoard.id)
+    const active = workspaceMode === 'diagram' ? nextBoard.views.diagram : nextBoard.views.mindmap
+    setNodes(cloneSnapshot(active.nodes, active.edges).nodes)
+    setEdges(cloneSnapshot(active.nodes, active.edges).edges)
+    setSelectedNodeIds([])
+    setSelectedEdgeIds([])
+    setSaved(false)
+    setNotice(`已切換到「${nextBoard.name}」`)
+    setTimeout(() => flow.fitView({ padding: workspaceMode === 'mindmap' ? 0.2 : 0.08, duration: 420, maxZoom: 1.1 }), 80)
+  }, [flow, setEdges, setNodes, workspaceMode])
+
+  const switchArtboard = useCallback((id: string) => {
+    if (id === activeArtboardId) return
+    const nextCollection = saveActiveArtboardToCollection()
+    const target = nextCollection.find((artboard) => artboard.id === id)
+    if (target) openArtboard(target)
+  }, [activeArtboardId, openArtboard, saveActiveArtboardToCollection])
+
+  const addArtboard = useCallback(() => {
+    const currentCollection = saveActiveArtboardToCollection()
+    const nextBoard = createBlankArtboard(currentCollection.length + 1)
+    const nextCollection = [...currentCollection, nextBoard]
+    setArtboardCollection(nextCollection)
+    workspaceHistory(nextBoard.id, 'diagram')
+    workspaceHistory(nextBoard.id, 'mindmap')
+    openArtboard(nextBoard)
+    setNotice(`已新增「${nextBoard.name}」`)
+  }, [openArtboard, saveActiveArtboardToCollection, setArtboardCollection, workspaceHistory])
+
+  const deleteArtboard = useCallback((id: string) => {
+    if (artboardsRef.current.length <= 1) {
+      setNotice('至少需要保留一個畫板')
+      return
+    }
+    const boardIndex = artboardsRef.current.findIndex((artboard) => artboard.id === id)
+    const board = artboardsRef.current[boardIndex]
+    if (!board) return
+    if (pendingDeleteArtboardId !== id) {
+      setPendingDeleteArtboardId(id)
+      setNotice(`再次點擊刪除，確認移除「${board.name}」及其全部內容`)
+      return
+    }
+
+    setPendingDeleteArtboardId(null)
+    const currentCollection = saveActiveArtboardToCollection()
+    const deletedBoard = cloneArtboard(currentCollection.find((artboard) => artboard.id === id) ?? board)
+    const deletionEntry: HistoryEntry = { kind: 'artboard-delete', artboard: deletedBoard, index: boardIndex }
+    const nextCollection = currentCollection.filter((artboard) => artboard.id !== id)
+    setArtboardCollection(nextCollection)
+    const historyOwner = id === activeArtboardId
+      ? nextCollection[Math.min(boardIndex, nextCollection.length - 1)]
+      : nextCollection.find((artboard) => artboard.id === activeArtboardId) ?? nextCollection[0]
+    const history = workspaceHistory(historyOwner.id, workspaceMode)
+    history.undo.push(deletionEntry)
+    history.redo = []
+    if (id === activeArtboardId) {
+      openArtboard(historyOwner)
+    }
+    setSaved(false)
+    setNotice(`已刪除「${board.name}」`)
+  }, [activeArtboardId, openArtboard, pendingDeleteArtboardId, saveActiveArtboardToCollection, setArtboardCollection, workspaceHistory, workspaceMode])
+
+  useEffect(() => {
+    if (!pendingDeleteArtboardId) return
+    const timer = window.setTimeout(() => setPendingDeleteArtboardId(null), 4000)
+    return () => window.clearTimeout(timer)
+  }, [pendingDeleteArtboardId])
+
+  const undo = useCallback(() => {
+    const history = workspaceHistory()
+    const previous = history.undo.pop()
+    if (!previous) return
+    if (previous.kind === 'artboard-delete') {
+      const currentCollection = saveActiveArtboardToCollection()
+      const nextCollection = [...currentCollection]
+      nextCollection.splice(Math.min(previous.index, nextCollection.length), 0, cloneArtboard(previous.artboard))
+      setArtboardCollection(nextCollection)
+      const restoredHistory = workspaceHistory(previous.artboard.id, workspaceMode)
+      restoredHistory.redo.push(previous)
+      openArtboard(previous.artboard)
+      markChanged(`已復原刪除「${previous.artboard.name}」`)
+      return
+    }
+    history.redo.push({ kind: 'view', view: cloneSnapshot(nodes, edges), model: cloneModel(semanticModelRef.current) })
+    installSemanticModel(previous.model, previous.view)
+    markChanged('已復原上一步')
+  }, [edges, installSemanticModel, markChanged, nodes, openArtboard, saveActiveArtboardToCollection, setArtboardCollection, workspaceHistory, workspaceMode])
+
+  const redo = useCallback(() => {
+    const history = workspaceHistory()
+    const next = history.redo.pop()
+    if (!next) return
+    if (next.kind === 'artboard-delete') {
+      const currentCollection = saveActiveArtboardToCollection()
+      if (currentCollection.length <= 1) return
+      const restoredIndex = currentCollection.findIndex((artboard) => artboard.id === next.artboard.id)
+      const nextCollection = currentCollection.filter((artboard) => artboard.id !== next.artboard.id)
+      setArtboardCollection(nextCollection)
+      const fallback = nextCollection[Math.min(Math.max(restoredIndex, 0), nextCollection.length - 1)]
+      const fallbackHistory = workspaceHistory(fallback.id, workspaceMode)
+      fallbackHistory.undo.push(next)
+      openArtboard(fallback)
+      markChanged(`已重做刪除「${next.artboard.name}」`)
+      return
+    }
+    history.undo.push({ kind: 'view', view: cloneSnapshot(nodes, edges), model: cloneModel(semanticModelRef.current) })
+    installSemanticModel(next.model, next.view)
+    markChanged('已重做')
+  }, [edges, installSemanticModel, markChanged, nodes, openArtboard, saveActiveArtboardToCollection, setArtboardCollection, workspaceHistory, workspaceMode])
+
+  const uploadArtboardBackground = useCallback((file: File) => {
+    if (!file.type.startsWith('image/')) {
+      setNotice('請選擇圖片格式的底圖')
+      return
+    }
+    const reader = new FileReader()
+    reader.onload = () => {
+      const backgroundSrc = String(reader.result)
+      const withBackground = (snapshot: ViewSnapshot): ViewSnapshot => ({
+        ...snapshot,
+        nodes: snapshot.nodes.map((node) => node.id === 'paper'
+          ? { ...node, data: { ...node.data, backgroundSrc, backgroundOpacity: 0.34 } }
+          : node),
+      })
+      diagramWorkspace.current = withBackground(diagramWorkspace.current)
+      mindMapWorkspace.current = withBackground(mindMapWorkspace.current)
+      setNodes((current) => current.map((node) => node.id === 'paper'
+        ? { ...node, data: { ...node.data, backgroundSrc, backgroundOpacity: 0.34 } }
+        : node))
+      markChanged(`已為目前畫板套用底圖「${file.name}」`)
+      if (backgroundUploadRef.current) backgroundUploadRef.current.value = ''
+    }
+    reader.readAsDataURL(file)
+  }, [markChanged, setNodes])
+
   const writeLocalFile = useCallback((message?: string) => {
     const views = unifiedViews()
+    const nextArtboards = saveActiveArtboardToCollection(views)
     const active = workspaceMode === 'diagram' ? views.diagram : views.mindmap
     const file: DiagramFile = {
       version: 2,
@@ -830,6 +1046,8 @@ function Editor() {
       semanticModel: semanticModelRef.current,
       views,
       workspace: { mode: workspaceMode, mindMapStructure },
+      artboards: nextArtboards,
+      activeArtboardId,
     }
     try {
       localStorage.setItem('jing-lamp-unified', JSON.stringify(file))
@@ -841,7 +1059,7 @@ function Editor() {
       setNotice('本機儲存空間不足，請先匯出 JSON 備份')
       return false
     }
-  }, [mindMapStructure, unifiedViews, workspaceMode])
+  }, [activeArtboardId, mindMapStructure, saveActiveArtboardToCollection, unifiedViews, workspaceMode])
 
   const saveLocal = () => writeLocalFile('已手動儲存到本機')
 
@@ -868,15 +1086,36 @@ function Editor() {
       const diagram = syncDiagramSnapshot(diagramSource, model)
       const mindmap = syncMindMapSnapshot(mindmapSource, model)
       if (!automatic) remember()
-      semanticModelRef.current = model
-      setSemanticModel(model)
-      diagramWorkspace.current = diagram
-      mindMapWorkspace.current = mindmap
-      setWorkspaceMode(restoredMode)
-      if (restoredStructure === 'original' || restoredStructure === 'balanced' || restoredStructure === 'right') {
-        setMindMapStructure(restoredStructure)
+      const legacyBoard: DiagramArtboard = {
+        id: 'artboard-1',
+        name: '原圖畫板',
+        semanticModel: model,
+        views: { diagram, mindmap },
+        mindMapStructure: restoredStructure === 'balanced' || restoredStructure === 'right' ? restoredStructure : 'original',
       }
-      const active = restoredMode === 'diagram' ? diagram : mindmap
+      const restoredArtboards = file.artboards?.length
+        ? file.artboards.map((artboard) => ({
+            ...cloneArtboard(artboard),
+            views: {
+              diagram: syncDiagramSnapshot(artboard.views.diagram, artboard.semanticModel),
+              mindmap: syncMindMapSnapshot(artboard.views.mindmap, artboard.semanticModel),
+            },
+          }))
+        : [legacyBoard]
+      const restoredBoard = restoredArtboards.find((artboard) => artboard.id === file.activeArtboardId) ?? restoredArtboards[0]
+      setArtboardCollection(restoredArtboards)
+      setActiveArtboardId(restoredBoard.id)
+      historiesByArtboard.current = Object.fromEntries(restoredArtboards.map((artboard) => [artboard.id, {
+        diagram: { undo: [], redo: [] },
+        mindmap: { undo: [], redo: [] },
+      }]))
+      semanticModelRef.current = restoredBoard.semanticModel
+      setSemanticModel(restoredBoard.semanticModel)
+      diagramWorkspace.current = restoredBoard.views.diagram
+      mindMapWorkspace.current = restoredBoard.views.mindmap
+      setWorkspaceMode(restoredMode)
+      setMindMapStructure(restoredBoard.mindMapStructure)
+      const active = restoredMode === 'diagram' ? restoredBoard.views.diagram : restoredBoard.views.mindmap
       setNodes(active.nodes)
       setEdges(active.edges)
       setSaved(true)
@@ -935,6 +1174,7 @@ function Editor() {
 
   const exportJson = () => {
     const views = unifiedViews()
+    const nextArtboards = saveActiveArtboardToCollection(views)
     const active = workspaceMode === 'diagram' ? views.diagram : views.mindmap
     const file: DiagramFile = {
       version: 2,
@@ -943,6 +1183,9 @@ function Editor() {
       edges: active.edges,
       semanticModel: semanticModelRef.current,
       views,
+      workspace: { mode: workspaceMode, mindMapStructure },
+      artboards: nextArtboards,
+      activeArtboardId,
     }
     const blob = new Blob([JSON.stringify(file, null, 2)], { type: 'application/json' })
     const url = URL.createObjectURL(blob)
@@ -966,11 +1209,30 @@ function Editor() {
         const mindmapSource = fileData.semanticModel?.relations?.length ? fileData.views?.mindmap ?? initialMindMapSnapshot : { nodes: [], edges: [] }
         const mindmap = syncMindMapSnapshot(mindmapSource, model)
         remember()
-        semanticModelRef.current = model
-        setSemanticModel(model)
-        diagramWorkspace.current = diagram
-        mindMapWorkspace.current = mindmap
-        const active = workspaceMode === 'diagram' ? diagram : mindmap
+        const importedBoards: DiagramArtboard[] = fileData.artboards?.length
+          ? fileData.artboards.map((artboard) => ({
+              ...cloneArtboard(artboard),
+              views: {
+                diagram: syncDiagramSnapshot(artboard.views.diagram, artboard.semanticModel),
+                mindmap: syncMindMapSnapshot(artboard.views.mindmap, artboard.semanticModel),
+              },
+            }))
+          : [{
+              id: 'artboard-1',
+              name: '匯入畫板',
+              semanticModel: model,
+              views: { diagram, mindmap },
+              mindMapStructure: 'original',
+            }]
+        const importedBoard = importedBoards.find((artboard) => artboard.id === fileData.activeArtboardId) ?? importedBoards[0]
+        setArtboardCollection(importedBoards)
+        setActiveArtboardId(importedBoard.id)
+        semanticModelRef.current = importedBoard.semanticModel
+        setSemanticModel(importedBoard.semanticModel)
+        diagramWorkspace.current = importedBoard.views.diagram
+        mindMapWorkspace.current = importedBoard.views.mindmap
+        setMindMapStructure(importedBoard.mindMapStructure)
+        const active = workspaceMode === 'diagram' ? importedBoard.views.diagram : importedBoard.views.mindmap
         setNodes(active.nodes)
         setEdges(active.edges)
         markChanged('已匯入統一模型，兩種視圖已同步')
@@ -1071,8 +1333,8 @@ function Editor() {
             ><Palette />屬性</button>
           </div>
           <span className="toolbar-separator" />
-          <IconButton label="復原" onClick={undo} disabled={!historyByWorkspace.current[workspaceMode].undo.length}><Undo2 /></IconButton>
-          <IconButton label="重做" onClick={redo} disabled={!historyByWorkspace.current[workspaceMode].redo.length}><Redo2 /></IconButton>
+          <IconButton label="復原" onClick={undo} disabled={!workspaceHistory().undo.length}><Undo2 /></IconButton>
+          <IconButton label="重做" onClick={redo} disabled={!workspaceHistory().redo.length}><Redo2 /></IconButton>
           <span className="toolbar-separator" />
           <IconButton label="縮放至全圖" onClick={() => flow.fitView({ padding: 0.08, duration: 450 })}><Maximize2 /></IconButton>
           {workspaceMode === 'diagram' ? (
@@ -1131,7 +1393,7 @@ function Editor() {
           </div>
           <input ref={uploadRef} className="hidden-input" type="file" accept="image/*" onChange={(event) => event.target.files?.[0] && addImage(event.target.files[0])} />
 
-          <div className="layer-title"><span>{workspaceMode === 'mindmap' ? '大綱與圖層' : '圖層'}</span><span>{layerItems.length}</span></div>
+          <div className="layer-title"><span>畫板與{workspaceMode === 'mindmap' ? '大綱' : '圖層'}</span><span>{artboards.length}</span></div>
           <div className="layer-actions" aria-label="圖層與編組操作">
             <button onClick={groupSelected} disabled={groupableNodes.length < 2} title="選取兩個以上元素後編組">
               <Group /><span>編組</span><kbd>⌘G</kbd>
@@ -1141,58 +1403,86 @@ function Editor() {
             </button>
           </div>
           <div className="layer-list">
-            {layerItems.map((item, index) => (
-              <div
-                key={item.id}
-                className={`layer-row ${selectedNodeIds.includes(item.id) ? 'is-active' : ''} ${draggedLayerId === item.id ? 'is-dragging' : ''} ${layerDropTargetId === item.id ? 'is-drop-target' : ''}`}
-                style={{ paddingLeft: Math.min(item.depth, 3) * 14 }}
-                draggable
-                onDragStart={(event) => {
-                  event.dataTransfer.effectAllowed = 'move'
-                  event.dataTransfer.setData('text/plain', item.id)
-                  setDraggedLayerId(item.id)
-                }}
-                onDragOver={(event) => {
-                  event.preventDefault()
-                  event.dataTransfer.dropEffect = 'move'
-                  setLayerDropTargetId(item.id)
-                }}
-                onDrop={(event) => {
-                  event.preventDefault()
-                  const sourceId = event.dataTransfer.getData('text/plain') || draggedLayerId
-                  if (sourceId) reorderLayer(sourceId, item.id)
-                  setDraggedLayerId(null)
-                  setLayerDropTargetId(null)
-                }}
-                onDragEnd={() => {
-                  setDraggedLayerId(null)
-                  setLayerDropTargetId(null)
-                }}
-              >
-                <span className="layer-drag" aria-hidden="true"><GripVertical /></span>
-                <button
-                  className="layer-select"
-                  onClick={(event) => {
-                    const additive = event.shiftKey || event.metaKey || event.ctrlKey
-                    const nextSelection = additive
-                      ? selectedNodeIds.includes(item.id)
-                        ? selectedNodeIds.filter((id) => id !== item.id)
-                        : [...selectedNodeIds, item.id]
-                      : [item.id]
-                    setSelectedNodeIds(nextSelection)
-                    setNodes((current) => current.map((node) => ({ ...node, selected: nextSelection.includes(node.id) })))
-                    if (!additive) flow.fitView({ nodes: [{ id: item.id }], padding: 1.5, duration: 350, maxZoom: 1.2 })
-                  }}
-                >
-                  <span className="layer-glyph">{item.isGroup ? '▣' : workspaceMode === 'mindmap' ? (item.depth === 0 ? '◉' : '—') : item.kind === 'imageNode' ? '◈' : item.kind === 'frameNode' ? '□' : '文'}</span>
-                  <span>{item.label}</span>
-                </button>
-                <span className="layer-order-buttons">
-                  <button onClick={() => moveLayer(item.id, -1)} disabled={index === 0} aria-label={`上移 ${item.label}`} title="上移一層"><ChevronUp /></button>
-                  <button onClick={() => moveLayer(item.id, 1)} disabled={index === layerItems.length - 1} aria-label={`下移 ${item.label}`} title="下移一層"><ChevronDown /></button>
-                </span>
-              </div>
-            ))}
+            {artboards.map((artboard, boardIndex) => {
+              const isActive = artboard.id === activeArtboardId
+              const boardSnapshot = artboard.views[workspaceMode]
+              const itemCount = isActive ? layerItems.length : boardSnapshot.nodes.filter((node) => node.id !== 'paper').length
+              return (
+                <section className={`artboard-layer-section ${isActive ? 'is-active' : ''}`} key={artboard.id}>
+                  <div className="artboard-layer-heading">
+                    <button className="artboard-layer-open" onClick={() => switchArtboard(artboard.id)} aria-expanded={isActive}>
+                      <span className="artboard-index">{String(boardIndex + 1).padStart(2, '0')}</span>
+                      <span className="artboard-layer-name">{artboard.name}</span>
+                      <span className="artboard-layer-count">{itemCount}</span>
+                      <ChevronDown />
+                    </button>
+                    <button
+                      className={`artboard-delete-button ${pendingDeleteArtboardId === artboard.id ? 'is-confirming' : ''}`}
+                      onClick={() => deleteArtboard(artboard.id)}
+                      disabled={artboards.length <= 1}
+                      aria-label={`${pendingDeleteArtboardId === artboard.id ? '確認刪除' : '刪除'} ${artboard.name}`}
+                      title={artboards.length <= 1 ? '至少保留一個畫板' : `刪除 ${artboard.name}`}
+                    ><Trash2 /></button>
+                  </div>
+                  {isActive && (
+                    <div className="artboard-layer-items">
+                      {layerItems.map((item, index) => (
+                        <div
+                          key={item.id}
+                          className={`layer-row ${selectedNodeIds.includes(item.id) ? 'is-active' : ''} ${draggedLayerId === item.id ? 'is-dragging' : ''} ${layerDropTargetId === item.id ? 'is-drop-target' : ''}`}
+                          style={{ paddingLeft: Math.min(item.depth, 3) * 14 }}
+                          draggable
+                          onDragStart={(event) => {
+                            event.dataTransfer.effectAllowed = 'move'
+                            event.dataTransfer.setData('text/plain', item.id)
+                            setDraggedLayerId(item.id)
+                          }}
+                          onDragOver={(event) => {
+                            event.preventDefault()
+                            event.dataTransfer.dropEffect = 'move'
+                            setLayerDropTargetId(item.id)
+                          }}
+                          onDrop={(event) => {
+                            event.preventDefault()
+                            const sourceId = event.dataTransfer.getData('text/plain') || draggedLayerId
+                            if (sourceId) reorderLayer(sourceId, item.id)
+                            setDraggedLayerId(null)
+                            setLayerDropTargetId(null)
+                          }}
+                          onDragEnd={() => {
+                            setDraggedLayerId(null)
+                            setLayerDropTargetId(null)
+                          }}
+                        >
+                          <span className="layer-drag" aria-hidden="true"><GripVertical /></span>
+                          <button
+                            className="layer-select"
+                            onClick={(event) => {
+                              const additive = event.shiftKey || event.metaKey || event.ctrlKey
+                              const nextSelection = additive
+                                ? selectedNodeIds.includes(item.id)
+                                  ? selectedNodeIds.filter((id) => id !== item.id)
+                                  : [...selectedNodeIds, item.id]
+                                : [item.id]
+                              setSelectedNodeIds(nextSelection)
+                              setNodes((current) => current.map((node) => ({ ...node, selected: nextSelection.includes(node.id) })))
+                              if (!additive) flow.fitView({ nodes: [{ id: item.id }], padding: 1.5, duration: 350, maxZoom: 1.2 })
+                            }}
+                          >
+                            <span className="layer-glyph">{item.isGroup ? '▣' : workspaceMode === 'mindmap' ? (item.depth === 0 ? '◉' : '—') : item.kind === 'imageNode' ? '◈' : item.kind === 'frameNode' ? '□' : '文'}</span>
+                            <span>{item.label}</span>
+                          </button>
+                          <span className="layer-order-buttons">
+                            <button onClick={() => moveLayer(item.id, -1)} disabled={index === 0} aria-label={`上移 ${item.label}`} title="上移一層"><ChevronUp /></button>
+                            <button onClick={() => moveLayer(item.id, 1)} disabled={index === layerItems.length - 1} aria-label={`下移 ${item.label}`} title="下移一層"><ChevronDown /></button>
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </section>
+              )
+            })}
           </div>
           <div className="panel-footer-actions">
             <button onClick={() => importRef.current?.click()}><Upload /> 匯入 JSON</button>
@@ -1204,6 +1494,36 @@ function Editor() {
         {!showLayers && <button className="panel-reveal reveal-left" onClick={() => setShowLayers(true)}>元素</button>}
 
         <div className="canvas-wrap">
+          <nav className="artboard-strip" aria-label="畫板切換">
+            <div className="artboard-tabs">
+              {artboards.map((artboard, index) => (
+                <div className={`artboard-tab-item ${artboard.id === activeArtboardId ? 'is-active' : ''}`} key={artboard.id}>
+                  <button className="artboard-tab-open" onClick={() => switchArtboard(artboard.id)} title={`切換到 ${artboard.name}`}>
+                    <span>{String(index + 1).padStart(2, '0')}</span>{artboard.name}
+                  </button>
+                  <button
+                    className={`artboard-tab-delete ${pendingDeleteArtboardId === artboard.id ? 'is-confirming' : ''}`}
+                    onClick={() => deleteArtboard(artboard.id)}
+                    disabled={artboards.length <= 1}
+                    aria-label={`${pendingDeleteArtboardId === artboard.id ? '確認刪除' : '刪除'} ${artboard.name}`}
+                    title={artboards.length <= 1 ? '至少保留一個畫板' : `刪除 ${artboard.name}`}
+                  ><Trash2 /></button>
+                </div>
+              ))}
+            </div>
+            <button className="add-artboard-button" onClick={addArtboard} aria-label="新增畫板" title="新增畫板"><Plus /></button>
+            <button className="background-upload-button" onClick={() => backgroundUploadRef.current?.click()} aria-label="上傳底圖" title="為目前畫板上傳或替換底圖">
+              <ImagePlus /><span>上傳底圖</span>
+            </button>
+            <input
+              ref={backgroundUploadRef}
+              className="hidden-input"
+              type="file"
+              accept="image/*"
+              aria-label="上傳畫板底圖"
+              onChange={(event) => event.target.files?.[0] && uploadArtboardBackground(event.target.files[0])}
+            />
+          </nav>
           <ReactFlow<DiagramNode, DiagramEdge>
             nodes={nodes}
             edges={edges}

@@ -195,6 +195,25 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
 .layer-actions svg { width: 14px; height: 14px; }
 .layer-actions kbd { margin-left: auto; transform: scale(.8); }
 .layer-list { min-height: 0; overflow: auto; padding: 0 8px 10px; }
+.artboard-layer-section { margin-bottom: 7px; overflow: hidden; border: 1px solid #d4d3cc; border-radius: 7px; background: rgba(250,249,245,.72); }
+.artboard-layer-section.is-active { border-color: #c2a89f; background: #f8f3ee; box-shadow: 0 3px 10px rgba(82,55,46,.06); }
+.artboard-layer-heading { width: 100%; height: 38px; display: flex; align-items: center; color: #62635d; background: transparent; }
+.artboard-layer-section.is-active .artboard-layer-heading { color: #742f20; background: #efe3de; }
+.artboard-layer-open { min-width: 0; height: 100%; flex: 1; display: grid; grid-template-columns: 27px minmax(0, 1fr) auto 18px; align-items: center; gap: 5px; padding: 0 4px 0 7px; border: 0; color: inherit; background: transparent; cursor: pointer; text-align: left; }
+.artboard-layer-open:hover { color: var(--red-dark); background: #eee9e3; }
+.artboard-layer-open > svg { width: 13px; transition: transform 150ms ease; }
+.artboard-layer-section.is-active .artboard-layer-open > svg { transform: rotate(180deg); }
+.artboard-delete-button { width: 30px; height: 30px; display: grid; place-items: center; flex: 0 0 auto; margin-right: 4px; border: 0; border-radius: 5px; color: #a18e88; background: transparent; cursor: pointer; opacity: 0; transition: opacity 120ms ease, color 120ms ease, background 120ms ease; }
+.artboard-layer-heading:hover .artboard-delete-button,
+.artboard-delete-button:focus-visible { opacity: 1; }
+.artboard-delete-button:hover:not(:disabled) { color: #873521; background: rgba(255,255,255,.72); }
+.artboard-delete-button.is-confirming { color: #fff8f1; background: var(--red); opacity: 1; }
+.artboard-delete-button:disabled { cursor: default; opacity: .2; }
+.artboard-delete-button svg { width: 13px; height: 13px; }
+.artboard-index { color: #a38278; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 9px; letter-spacing: .04em; }
+.artboard-layer-name { overflow: hidden; font-size: 11px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.artboard-layer-count { min-width: 20px; height: 18px; display: grid; place-items: center; border-radius: 9px; color: #7e7f78; background: rgba(255,255,255,.65); font-size: 9px; }
+.artboard-layer-items { padding: 4px 3px 5px; border-top: 1px solid rgba(195,173,165,.55); }
 .layer-row { position: relative; min-width: 0; height: 36px; display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; align-items: center; border-radius: 5px; color: #5f605b; transition: background 120ms ease, opacity 120ms ease, transform 120ms ease; }
 .layer-row:hover { background: #e9e8e2; }
 .layer-row.is-active { color: #7e301f; background: #eee0da; }
@@ -224,6 +243,29 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
 .reveal-right { right: 0; border-right: 0; border-radius: 5px 0 0 5px; }
 
 .canvas-wrap { position: relative; grid-column: 2; grid-row: 1; min-width: 0; min-height: 0; background: var(--canvas); }
+.artboard-strip { position: absolute; z-index: 15; top: 14px; left: 16px; right: 16px; height: 40px; display: flex; align-items: center; gap: 6px; pointer-events: none; }
+.artboard-tabs { min-width: 0; max-width: min(62vw, 720px); display: flex; align-items: center; gap: 4px; overflow-x: auto; padding: 3px; border: 1px solid rgba(184,183,175,.9); border-radius: 9px; background: rgba(247,246,241,.9); box-shadow: 0 7px 22px rgba(34,34,30,.1); backdrop-filter: blur(10px); pointer-events: auto; scrollbar-width: none; }
+.artboard-tabs::-webkit-scrollbar { display: none; }
+.artboard-tab-item { height: 29px; flex: 0 0 auto; display: flex; align-items: center; overflow: hidden; border-radius: 6px; color: #6c6d67; }
+.artboard-tab-item:hover { color: #423f3b; background: rgba(232,229,222,.82); }
+.artboard-tab-item.is-active { color: #713020; background: #fffdfa; box-shadow: 0 1px 5px rgba(46,38,34,.14); }
+.artboard-tab-open { height: 29px; display: inline-flex; align-items: center; gap: 7px; padding: 0 7px 0 10px; border: 0; color: inherit; background: transparent; cursor: pointer; font-size: 10px; white-space: nowrap; }
+.artboard-tab-open span { color: #a28076; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 8px; }
+.artboard-tab-delete { width: 0; height: 25px; display: grid; place-items: center; padding: 0; overflow: hidden; border: 0; border-radius: 5px; color: #a1847b; background: transparent; cursor: pointer; opacity: 0; transition: width 140ms ease, opacity 120ms ease; }
+.artboard-tab-item:hover .artboard-tab-delete,
+.artboard-tab-delete:focus-visible { width: 25px; opacity: 1; }
+.artboard-tab-delete:hover:not(:disabled) { color: #8b331f; background: #f1ddd6; }
+.artboard-tab-delete.is-confirming { width: 25px; color: #fff8f1; background: var(--red); opacity: 1; }
+.artboard-tab-delete:disabled { cursor: default; }
+.artboard-tab-delete svg { width: 12px; height: 12px; }
+.add-artboard-button,
+.background-upload-button { height: 34px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; flex: 0 0 auto; border: 1px solid rgba(184,183,175,.95); border-radius: 8px; color: #5d5e58; background: rgba(249,248,244,.93); box-shadow: 0 5px 16px rgba(34,34,30,.09); backdrop-filter: blur(10px); cursor: pointer; pointer-events: auto; }
+.add-artboard-button { width: 34px; padding: 0; color: #fffaf2; border-color: #843522; background: var(--red); }
+.add-artboard-button:hover { background: var(--red-dark); transform: translateY(-1px); }
+.background-upload-button { padding: 0 11px; font-size: 10px; }
+.background-upload-button:hover { color: var(--red-dark); border-color: #bc8c7d; background: #fbf1ed; }
+.add-artboard-button svg,
+.background-upload-button svg { width: 15px; height: 15px; }
 .react-flow { background: radial-gradient(circle at 50% 15%, #eff0ed 0, #dddedb 54%, #d3d4d1 100%); }
 .react-flow__background { opacity: 0.55; }
 .react-flow__controls { margin: 16px; overflow: hidden; border: 1px solid #c7c6bf; border-radius: 7px; box-shadow: 0 7px 18px rgba(31, 31, 27, 0.1); }
@@ -390,6 +432,12 @@ select:focus-visible { outline: 2px solid #a9472e; outline-offset: 2px; }
   .canvas-status { max-width: 80%; }
   .layer-order-buttons { opacity: 1; }
   .layer-actions > button { min-height: 36px; }
+  .artboard-strip { top: 10px; left: 10px; right: 10px; }
+  .artboard-tabs { max-width: calc(100vw - 112px); }
+  .background-upload-button { width: 34px; padding: 0; }
+  .background-upload-button span { display: none; }
+  .artboard-tab-delete { width: 24px; opacity: .72; }
+  .artboard-delete-button { opacity: .72; }
 }
 
 @media (max-width: 520px) {

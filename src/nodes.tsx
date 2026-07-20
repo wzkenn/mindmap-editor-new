@@ -45,14 +45,15 @@ function Handles({ selected }: { selected?: boolean }) {
 }
 
 export function ArtboardNode({ data }: NodeProps<DiagramNode>) {
+  const referenceSrc = data.backgroundSrc || (data.showReference ? assetUrl('assets/reference-original.jpg') : undefined)
   return (
     <div className="artboard-node">
-      {data.showReference && (
+      {referenceSrc && (
         <img
           className="reference-image"
-          src={assetUrl('assets/reference-original.jpg')}
-          alt="原圖參考底稿"
-          style={{ opacity: data.referenceOpacity ?? 0.16 }}
+          src={referenceSrc}
+          alt={data.backgroundSrc ? '畫板底圖' : '原圖參考底稿'}
+          style={{ opacity: data.backgroundSrc ? data.backgroundOpacity ?? 0.34 : data.referenceOpacity ?? 0.16 }}
         />
       )}
       <div className="paper-grain" />

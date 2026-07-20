@@ -13,6 +13,8 @@ export type DiagramNodeData = {
   rounded?: boolean
   showReference?: boolean
   referenceOpacity?: number
+  backgroundSrc?: string
+  backgroundOpacity?: number
   upper?: string
   lower?: string
   topicLevel?: number
@@ -70,6 +72,17 @@ export type ViewSnapshot = {
   edges: DiagramEdge[]
 }
 
+export type DiagramArtboard = {
+  id: string
+  name: string
+  semanticModel: SemanticModel
+  views: {
+    diagram: ViewSnapshot
+    mindmap: ViewSnapshot
+  }
+  mindMapStructure: 'original' | 'balanced' | 'right'
+}
+
 export type DiagramFile = {
   version: 2
   title: string
@@ -84,4 +97,6 @@ export type DiagramFile = {
     mode: 'diagram' | 'mindmap'
     mindMapStructure: 'original' | 'balanced' | 'right'
   }
+  artboards?: DiagramArtboard[]
+  activeArtboardId?: string
 }
